@@ -58,7 +58,7 @@ jobs:
           while IFS= read -r namespace; do
             candidate_id="$(jq -r '.id' <<< "$namespace")"
             candidate_title="$(jq -r '.title' <<< "$namespace")"
-            $WRANGLER kv key get "setting:" --namespace-id "$candidate_id" --text > setting.json 2>/dev/null || true
+            $WRANGLER kv key get "setting:" --namespace-id "$candidate_id" --text --remote > setting.json 2>/dev/null || true
             if node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('setting.json','utf8')); if (!Object.prototype.hasOwnProperty.call(data,'receive')) process.exit(2);" 2>/dev/null; then
               KV_NAMESPACE_ID="$candidate_id"
               echo "Selected KV namespace: ${candidate_title} (${candidate_id:0:8}...)"
@@ -68,6 +68,6 @@ jobs:
           test -n "$KV_NAMESPACE_ID"
 
           node -e "const fs=require('fs'); const p='setting.json'; const data=JSON.parse(fs.readFileSync(p,'utf8')); data.receive=0; fs.writeFileSync(p, JSON.stringify(data)); console.log(JSON.stringify({kv_receive:data.receive}));"
-          $WRANGLER kv key put "setting:" --namespace-id "$KV_NAMESPACE_ID" --path setting.json
+          $WRANGLER kv key put "setting:" --namespace-id "$KV_NAMESPACE_ID" --path setting.json --remote
 
           $WRANGLER d1 execute "$D1_DATABASE_NAME" --remote --command "SELECT receive, send, CASE WHEN resend_tokens IS NOT NULL AND resend_tokens <> '{}' THEN 1 ELSE 0 END AS has_resend_tokens FROM setting LIMIT 1;"
