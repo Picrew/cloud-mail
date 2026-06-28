@@ -1,0 +1,46 @@
+name: Cloud Mail maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Action to run"
+        required: true
+        default: "diagnose"
+        type: choice
+        options:
+          - diagnose
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_NAME: cloud-mail
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+
+      - name: Diagnose Cloud Mail D1
+        if: ${{ inputs.mode == 'diagnose' }}
+        run: |
+          set -euo pipefail
+          WRANGLER="npx --yes wrangler@4"
+
+          run_sql() {
+            local label="$1"
+            local sql="$2"
+            echo "::group::$label"
+            $WRANGLER d1 execute "$D1_DATABASE_NAME" --remote --command "$sql"
+            echo "::endgroup::"
+          }
+
+          run_sql "setting flags" "SELECT register, receive, send, add_email, many_email, no_recipient, reg_key, auto_refresh, CASE WHEN resend_tokens IS NOT NULL AND resend_tokens <> '{}' THEN 1 ELSE 0 END AS has_resend_tokens, length(COALESCE(resend_tokens, '')) AS resend_tokens_len FROM setting LIMIT 1;"
+          run_sql "users" "SELECT user_id, email, type, status, is_del, create_time, active_time FROM user ORDER BY user_id;"
+          run_sql "accounts" "SELECT account_id, email, user_id, status, is_del, all_receive, create_time, latest_email_time FROM account ORDER BY account_id;"
+          run_sql "roles" "SELECT role_id, name, is_default, send_type, send_count, account_count, avail_domain, ban_email FROM role ORDER BY role_id;"
+          run_sql "noreply message counts" "SELECT to_email, type, status, is_del, COUNT(*) AS total, MAX(create_time) AS latest FROM email WHERE lower(to_email) = 'noreply@seekcopywriter.com' OR lower(send_email) = 'noreply@seekcopywriter.com' GROUP BY to_email, type, status, is_del ORDER BY latest DESC;"
