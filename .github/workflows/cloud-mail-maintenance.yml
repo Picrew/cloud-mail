@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - diagnose
+          - repair_receive
 
 jobs:
   maintenance:
@@ -44,3 +45,20 @@ jobs:
           run_sql "accounts" "SELECT account_id, email, user_id, status, is_del, all_receive, create_time, latest_email_time FROM account ORDER BY account_id;"
           run_sql "roles" "SELECT role_id, name, is_default, send_type, send_count, account_count, avail_domain, ban_email FROM role ORDER BY role_id;"
           run_sql "noreply message counts" "SELECT to_email, type, status, is_del, COUNT(*) AS total, MAX(create_time) AS latest FROM email WHERE lower(to_email) = 'noreply@seekcopywriter.com' OR lower(send_email) = 'noreply@seekcopywriter.com' GROUP BY to_email, type, status, is_del ORDER BY latest DESC;"
+
+      - name: Repair receive flag
+        if: ${{ inputs.mode == 'repair_receive' }}
+        run: |
+          set -euo pipefail
+          WRANGLER="npx --yes wrangler@4"
+
+          $WRANGLER d1 execute "$D1_DATABASE_NAME" --remote --command "UPDATE setting SET receive = 0;"
+
+          KV_NAMESPACE_ID="$($WRANGLER kv namespace list | jq -r --arg title "$D1_DATABASE_NAME" '.[] | select(.title == $title) | .id' | head -n 1)"
+          test -n "$KV_NAMESPACE_ID"
+
+          $WRANGLER kv key get "setting:" --namespace-id "$KV_NAMESPACE_ID" --text > setting.json
+          node -e "const fs=require('fs'); const p='setting.json'; const data=JSON.parse(fs.readFileSync(p,'utf8')); data.receive=0; fs.writeFileSync(p, JSON.stringify(data)); console.log(JSON.stringify({kv_receive:data.receive}));"
+          $WRANGLER kv key put "setting:" --namespace-id "$KV_NAMESPACE_ID" --path setting.json
+
+          $WRANGLER d1 execute "$D1_DATABASE_NAME" --remote --command "SELECT receive, send, CASE WHEN resend_tokens IS NOT NULL AND resend_tokens <> '{}' THEN 1 ELSE 0 END AS has_resend_tokens FROM setting LIMIT 1;"
