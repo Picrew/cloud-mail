@@ -54,10 +54,19 @@ jobs:
 
           $WRANGLER d1 execute "$D1_DATABASE_NAME" --remote --command "UPDATE setting SET receive = 0;"
 
-          KV_NAMESPACE_ID="$($WRANGLER kv namespace list | jq -r --arg title "$D1_DATABASE_NAME" '.[] | select(.title == $title) | .id' | head -n 1)"
+          KV_NAMESPACE_ID=""
+          while IFS= read -r namespace; do
+            candidate_id="$(jq -r '.id' <<< "$namespace")"
+            candidate_title="$(jq -r '.title' <<< "$namespace")"
+            $WRANGLER kv key get "setting:" --namespace-id "$candidate_id" --text > setting.json 2>/dev/null || true
+            if node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync('setting.json','utf8')); if (!Object.prototype.hasOwnProperty.call(data,'receive')) process.exit(2);" 2>/dev/null; then
+              KV_NAMESPACE_ID="$candidate_id"
+              echo "Selected KV namespace: ${candidate_title} (${candidate_id:0:8}...)"
+              break
+            fi
+          done < <($WRANGLER kv namespace list | jq -c '.[]')
           test -n "$KV_NAMESPACE_ID"
 
-          $WRANGLER kv key get "setting:" --namespace-id "$KV_NAMESPACE_ID" --text > setting.json
           node -e "const fs=require('fs'); const p='setting.json'; const data=JSON.parse(fs.readFileSync(p,'utf8')); data.receive=0; fs.writeFileSync(p, JSON.stringify(data)); console.log(JSON.stringify({kv_receive:data.receive}));"
           $WRANGLER kv key put "setting:" --namespace-id "$KV_NAMESPACE_ID" --path setting.json
 
